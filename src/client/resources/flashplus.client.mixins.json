@@ -4,12 +4,14 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"ExportJobMixin",
-		"SelectedEntityPopupMixin",
+		"Window.SelectedEntityPopupMixin",
 		"keyframes.FOVKeyframeMixin",
 		"keyframes.MinecraftKeyframeHandlerMixin",
 		"keyframes.CameraRotationMixin",
-		"StartExportWindowMixin",
-		"ExportScreenshotWindowMixin"
+		"Window.StartExportWindowMixin",
+		"Window.ExportScreenshotWindowMixin",
+		"Window.MovementWindowMixin",
+		"ReplayUIRollMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

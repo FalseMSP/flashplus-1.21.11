@@ -1,10 +1,8 @@
-package redsmods.flashplus.mixin.client;
+package redsmods.flashplus.mixin.client.Window;
 
-import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.editor.ui.windows.SelectedEntityPopup;
 import com.moulberry.flashback.state.EditorState;
 import imgui.moulberry90.ImGui;
-import net.minecraft.client.resources.language.I18n;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;

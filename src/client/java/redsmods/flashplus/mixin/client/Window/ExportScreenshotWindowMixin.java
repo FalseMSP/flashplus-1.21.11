@@ -1,6 +1,5 @@
-package redsmods.flashplus.mixin.client;
+package redsmods.flashplus.mixin.client.Window;
 
-import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.combo_options.VideoContainer;
 import com.moulberry.flashback.configuration.FlashbackConfigV1;
 import com.moulberry.flashback.editor.ui.ImGuiHelper;
@@ -9,15 +8,10 @@ import com.moulberry.flashback.exporting.ExportJobQueue;
 import com.moulberry.flashback.exporting.ExportSettings;
 import com.moulberry.flashback.state.EditorState;
 import imgui.moulberry90.ImGui;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
-import redsmods.flashplus.PanoramaScreenshotHelper;
 
 import java.nio.file.Path;
 

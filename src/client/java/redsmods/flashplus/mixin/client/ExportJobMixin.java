@@ -208,8 +208,10 @@ public abstract class ExportJobMixin {
 		float interpolatedFov = (float) (keyframeStartFov + (targetFov - keyframeStartFov) * partialClientTick);
 
 		keyframeData.put("fov", keyframeEndFov);
+        keyframeData.put("time", Minecraft.getInstance().level.getDayTime() % 24000);
 
 		flashPlus$allCameraKeyframes.add(keyframeData);
+
 	}
 
 	@Unique

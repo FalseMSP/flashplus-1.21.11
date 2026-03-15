@@ -1,9 +1,8 @@
-package redsmods.flashplus.mixin.client;
+package redsmods.flashplus.mixin.client.Window;
 
 import com.moulberry.flashback.editor.ui.ImGuiHelper;
 import com.moulberry.flashback.editor.ui.windows.StartExportWindow;
 import imgui.moulberry90.ImGui;
-import net.minecraft.client.resources.language.I18n;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
