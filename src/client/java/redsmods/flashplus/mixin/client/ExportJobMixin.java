@@ -188,8 +188,8 @@ public abstract class ExportJobMixin {
 			keyframeData.put("y", FlashplusClient.quaternion.y);
 			keyframeData.put("z", FlashplusClient.quaternion.z);
 		} else {
-			keyframeData.put("yaw", camera.yRot());
-			keyframeData.put("pitch", camera.xRot());
+			keyframeData.put("yaw", camera.getYRot());
+			keyframeData.put("pitch", camera.getXRot());
 			keyframeData.put("roll", FlashplusClient.roll);
 		}
 
