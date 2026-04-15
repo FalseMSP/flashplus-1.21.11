@@ -1,24 +1,32 @@
 package redsmods.flashplus;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import org.joml.Quaternionf;
+import redsmods.flashplus.depth.DEPTHEXPORT;
+import redsmods.flashplus.depth.DEPTHVISUALS;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 public class FlashplusClient implements ClientModInitializer {
-	public static List<Map<String, Object>> trackedmodels = new ArrayList<Map<String, Object>>();
-	public static boolean cjson = true;
-	public static boolean etjson = true;
-	public static boolean useQuaternion = true;
-	public static boolean takePanorama = false;
-	public static boolean deleteCubeMap = true;
-	public static boolean lockRoll = false;
 
+	// Runtime-only state (not persisted)
+	public static List<Map<String, Object>> trackedmodels = new ArrayList<>();
 	public static float fov;
 	public static double roll;
 	public static Quaternionf quaternion;
+	public static int depthTickIndex = 0;
+
+	private static Config config;
+
+	public static Config getConfig() {
+		return config;
+	}
 
 	public static float getFOV() {
 		return fov;
@@ -26,6 +34,12 @@ public class FlashplusClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		// This entrypoint is suitable for setting up client-specific logic, such as rendering.
+		Path configFolder = FabricLoader.getInstance().getConfigDir().resolve("flashplus");
+		try {
+			Files.createDirectories(configFolder);
+		} catch (IOException e) {
+			// log error
+		}
+		config = Config.tryLoadFromFolder(configFolder);
 	}
 }

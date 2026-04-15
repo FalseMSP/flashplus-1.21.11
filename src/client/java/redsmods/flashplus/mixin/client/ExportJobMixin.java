@@ -2,7 +2,11 @@ package redsmods.flashplus.mixin.client;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.mojang.authlib.minecraft.client.MinecraftClient;
+import com.llamalad7.mixinextras.sugar.Local;
+import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.GpuTexture;
 import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.exporting.*;
 import com.moulberry.flashback.playback.ReplayServer;
@@ -15,6 +19,8 @@ import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.system.MemoryUtil;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -28,14 +34,46 @@ import redsmods.flashplus.PanoramaScreenshotHelper;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.nio.file.Path;
 import java.util.*;
 
 @Mixin(value = ExportJob.class, remap = false)
 public abstract class ExportJobMixin {
 
-	@Shadow @Final private ExportSettings settings;
-	@Shadow private double currentTickDouble;
+	// =========================================================================
+	// Shadowed fields
+	// =========================================================================
+
+	@Shadow @Final
+	private ExportSettings settings;
+
+	@Shadow
+	private double currentTickDouble;
+
+	// =========================================================================
+	// Depth export fields
+	// =========================================================================
+
+	@Unique
+	private static ByteBuffer flashPlus$depthByteBuffer = null;
+	@Unique
+	private static FloatBuffer flashPlus$depthFloatBuffer = null;
+	@Unique
+	private String flashPlus$depthFramesPath;
+	@Unique
+	private int flashPlus$exportX;
+	@Unique
+	private int flashPlus$exportY;
+	@Unique
+	private FloatBuffer flashPlus$rawDepthBuffer;
+	@Unique
+	private ByteBuffer flashPlus$linearDepthBuffer;
+
+	// =========================================================================
+	// Camera JSON / entity tracking fields
+	// =========================================================================
 
 	@Unique
 	private List<Map<String, Object>> flashPlus$allCameraKeyframes;
@@ -49,16 +87,17 @@ public abstract class ExportJobMixin {
 	@Unique
 	private float flashPlus$previousFov;
 
-	// ENABLE THESE
+	// Feature flags
 	private boolean cameraJson = true;
 	private boolean entityTracking = true;
 	private int flashPlus$tick = 0;
 	private Integer originalFov = 70;
-//	private boolean flashPlus$panoramaDone = false;
 
-	/**
-	 * Initialize data structures at the start of doExport, right after renderStartTime is set
-	 */
+	// =========================================================================
+	// 1. INIT — runs once at the start of doExport, right after renderStartTime
+	//    is set. Initialises both the depth writer and the JSON data structures.
+	// =========================================================================
+
 	@Inject(
 			method = "doExport",
 			at = @At(
@@ -68,21 +107,74 @@ public abstract class ExportJobMixin {
 			),
 			remap = false
 	)
-	private void flashPlus$initializeDataStructures(
+	private void flashPlus$init(
 			VideoWriter videoWriter,
 			SaveableFramebufferQueue downloader,
 			CallbackInfo ci) {
 
+		// ── Camera / entity JSON ──────────────────────────────────────────────
 		this.flashPlus$allCameraKeyframes = new ArrayList<>();
-		this.flashPlus$trackedData = new ArrayList<>();
-		this.flashPlus$gson = new GsonBuilder().setPrettyPrinting().create();
-		this.flashPlus$tick = 0;
-		this.flashPlus$previousFov = FlashplusClient.fov;
+		this.flashPlus$trackedData        = new ArrayList<>();
+		this.flashPlus$gson               = new GsonBuilder().setPrettyPrinting().create();
+		this.flashPlus$tick               = 0;
+		this.flashPlus$previousFov        = FlashplusClient.fov;
+
+		String basePath = flashPlus$basePath();
+		this.flashPlus$depthFramesPath = basePath + "_depth/";
+		java.io.File dir = new java.io.File(this.flashPlus$depthFramesPath);
+		if (!dir.exists()) dir.mkdirs();
 	}
 
-	/**
-	 * Capture camera and entity data for each frame, right before saveable.audioBuffer is set
-	 */
+	@Unique
+	private void flashPlus$captureDepthBuffer(RenderTarget renderTarget) {
+		GpuTexture depthTex = renderTarget.getDepthTexture();
+		if (depthTex == null) return;
+
+		int width = renderTarget.width;
+		int height = renderTarget.height;
+
+		// 1. Ensure our local buffers are ready
+		if (flashPlus$rawDepthBuffer == null || flashPlus$exportX != width || flashPlus$exportY != height) {
+			if (flashPlus$linearDepthBuffer != null) MemoryUtil.memFree(flashPlus$linearDepthBuffer);
+			flashPlus$exportX = width;
+			flashPlus$exportY = height;
+			flashPlus$linearDepthBuffer = MemoryUtil.memAlloc(width * height * 4);
+			flashPlus$rawDepthBuffer = flashPlus$linearDepthBuffer.asFloatBuffer();
+		}
+
+		// 2. Access the Texture ID via the implementation class
+		// In Fabric/Mojang mappings, GpuTexture is usually implemented by an OpenGL-specific class.
+		// We can cast it to find the ID.
+		// Check your IDE for 'GlGpuTexture' or similar implementation names.
+		try {
+			// This is a common pattern in the new internal Mojang API:
+			// Objects have a hidden/internal 'id' or 'handle'
+			java.lang.reflect.Method getHandle = depthTex.getClass().getDeclaredMethod("getGlId");
+			getHandle.setAccessible(true);
+			int glId = (int) getHandle.invoke(depthTex);
+
+			// 3. Manual Readback using a temporary FBO
+			int tempFbo = GlStateManager._glGenBuffers();
+			GlStateManager._glBindFramebuffer(36160, tempFbo);
+			GlStateManager._glFramebufferTexture2D(36160, 36096, 3553, glId, 0);
+
+			GL11.glReadPixels(0, 0, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, flashPlus$rawDepthBuffer);
+
+			GlStateManager._glBindFramebuffer(36160, 0);
+			GlStateManager._glDeleteFramebuffers(tempFbo);
+
+		} catch (Exception e) {
+			// If reflection fails, the mod is likely running on a non-OpenGL backend (like Metal/Vulkan)
+			System.err.println("[FlashPlus] Could not retrieve GL ID from GpuTexture. Depth export failed.");
+		}
+
+		flashPlus$saveDepthFrame(width, height, flashPlus$tick);
+	}
+
+	// =========================================================================
+	// 3. PER-FRAME (AFTER startDownload) — camera & entity data capture
+	// =========================================================================
+
 	@Inject(
 			method = "doExport",
 			at = @At(
@@ -95,30 +187,33 @@ public abstract class ExportJobMixin {
 	private void flashPlus$captureFrameData(
 			VideoWriter videoWriter,
 			SaveableFramebufferQueue downloader,
-			CallbackInfo ci
-	) {
-		// Access what you need through fields or other means
+			CallbackInfo ci) {
+
 		Minecraft minecraft = Minecraft.getInstance();
 		ReplayServer replayServer = Flashback.getReplayServer();
-
 		if (replayServer == null) return;
 
-		// You can access this.currentTickDouble directly since it's a field
-		double partialClientTick = this.currentTickDouble - (int)this.currentTickDouble;
+		double partialClientTick = this.currentTickDouble - (int) this.currentTickDouble;
 
-		if (FlashplusClient.cjson && !(FlashplusClient.takePanorama && settings.endTick() == settings.startTick())) {
+		boolean isPanorama = FlashplusClient.getConfig().takePanorama
+				&& settings.endTick() == settings.startTick();
+
+		if (FlashplusClient.getConfig().cjson && !isPanorama) {
 			flashPlus$captureCameraKeyframe(flashPlus$tick, partialClientTick, replayServer);
 		}
 
-		if (FlashplusClient.etjson && !(FlashplusClient.takePanorama && settings.endTick() == settings.startTick())) {
+		if (FlashplusClient.getConfig().etjson && !isPanorama) {
 			flashPlus$captureEntityData(flashPlus$tick, partialClientTick);
 		}
+
 		flashPlus$tick++;
 	}
 
-	/**
-	 * Write JSON files after the main loop completes, right before submitDownloadedFrames is called the final time
-	 */
+	// =========================================================================
+	// 4. FINISH — runs before the final drain call
+	//    writes camera/entity JSON files.
+	// =========================================================================
+
 	@Inject(
 			method = "doExport",
 			at = @At(
@@ -129,21 +224,20 @@ public abstract class ExportJobMixin {
 			),
 			remap = false
 	)
-	private void flashPlus$writeJsonFiles(
+	private void flashPlus$finish(
 			VideoWriter videoWriter,
 			SaveableFramebufferQueue downloader,
 			CallbackInfo ci) throws IOException {
 
-		// Apply Gaussian smoothing to FOV
+		// ── Apply FOV smoothing ───────────────────────────────────────────────
 		flashPlus$applySmoothingToFov();
 
-		// Determine output path
-		Path outputPath = this.settings.output();
-		String pathStr = outputPath.toAbsolutePath().toString();
-		int lastDot = pathStr.lastIndexOf('.');
+		// ── Determine base output path ────────────────────────────────────────
+		String pathStr  = this.settings.output().toAbsolutePath().toString();
+		int lastDot     = pathStr.lastIndexOf('.');
 		String basePath = lastDot > 0 ? pathStr.substring(0, lastDot) : pathStr;
 
-		// Write camera JSON
+		// ── Write camera JSON ─────────────────────────────────────────────────
 		if (cameraJson && !flashPlus$allCameraKeyframes.isEmpty()) {
 			Path cameraJsonPath = Path.of(basePath + "CJ.json");
 			try (FileWriter writer = new FileWriter(cameraJsonPath.toFile())) {
@@ -155,8 +249,8 @@ public abstract class ExportJobMixin {
 			}
 		}
 
-		// Write entity tracking JSON
-		if(entityTracking) {
+		// ── Write entity tracking JSON ────────────────────────────────────────
+		if (entityTracking) {
 			System.out.println(flashPlus$trackedData);
 		}
 		if (entityTracking && !FlashplusClient.trackedmodels.isEmpty() && !flashPlus$trackedData.isEmpty()) {
@@ -171,8 +265,97 @@ public abstract class ExportJobMixin {
 		}
 	}
 
+	// =========================================================================
+	// 5. PANORAMA — override camera yaw/pitch/FOV right after keyframes apply
+	// =========================================================================
+
+	@Inject(
+			method = "doExport",
+			at = @At(
+					value = "INVOKE",
+					target = "Lcom/moulberry/flashback/state/EditorState;applyKeyframes(Lcom/moulberry/flashback/keyframe/handler/KeyframeHandler;F)V",
+					shift = At.Shift.AFTER
+			)
+	)
+	private void overrideCameraForPanorama(
+			VideoWriter videoWriter,
+			SaveableFramebufferQueue downloader,
+			CallbackInfo ci) {
+
+		if (this.settings.startTick() != this.settings.endTick()) return;
+
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.player == null) return;
+
+		mc.player.setYRot(this.settings.initialCameraYaw());
+		mc.player.setXRot(this.settings.initialCameraPitch());
+		mc.player.yRotO = this.settings.initialCameraYaw();
+		mc.player.xRotO = this.settings.initialCameraPitch();
+
+		EditorState editorState = EditorStateManager.getCurrent();
+		if (editorState != null && editorState.replayVisuals.overrideFov) {
+			editorState.replayVisuals.overrideFovAmount = 90;
+		} else {
+			originalFov = mc.options.fov().get();
+			mc.options.fov().set(90);
+		}
+
+		mc.gameRenderer.getMainCamera().setup(
+				mc.level,
+				mc.player,
+				!mc.options.getCameraType().isFirstPerson(),
+				mc.options.getCameraType().isMirrored(),
+				1.0f
+		);
+	}
+
+	// =========================================================================
+	// 6. RETURN — panorama stitching once the full export queue drains
+	// =========================================================================
+
+	@Inject(method = "doExport", at = @At("RETURN"))
+	private void onExportFinish(CallbackInfo ci) {
+		if (ExportJobQueue.count() != 0 || !FlashplusClient.getConfig().takePanorama) return;
+
+		ExportJobQueue.drainingQueue = false;
+		Minecraft mc = Minecraft.getInstance();
+		mc.options.fov().set(originalFov);
+
+		Path outputPath = this.settings.output();
+		Path folder     = outputPath.getParent();
+		String fileName = outputPath.getFileName().toString();
+
+		String nameWithoutExtension = fileName.contains(".")
+				? fileName.substring(0, fileName.lastIndexOf("."))
+				: fileName;
+
+		String baseName = nameWithoutExtension.contains("_")
+				? nameWithoutExtension.substring(0, nameWithoutExtension.lastIndexOf("_"))
+				: nameWithoutExtension;
+
+		int size = this.settings.resolutionX();
+
+		new Thread(() -> {
+			PanoramaScreenshotHelper.convertCubemapToEquirectangular(folder, baseName, size);
+			System.out.println("Panorama conversion complete!");
+		}).start();
+	}
+
+	// =========================================================================
+	// Unique helpers
+	// =========================================================================
+
 	@Unique
-	private void flashPlus$captureCameraKeyframe(int tickIndex, double partialClientTick, ReplayServer replayServer) {
+	private String flashPlus$basePath() {
+		String pathStr = this.settings.output().toAbsolutePath().toString();
+		int lastDot = pathStr.lastIndexOf('.');
+		return lastDot > 0 ? pathStr.substring(0, lastDot) : pathStr;
+	}
+
+	@Unique
+	private void flashPlus$captureCameraKeyframe(
+			int tickIndex, double partialClientTick, ReplayServer replayServer) {
+
 		Camera camera = Minecraft.getInstance().gameRenderer.getMainCamera();
 		if (camera == null) return;
 
@@ -182,36 +365,28 @@ public abstract class ExportJobMixin {
 		Vec3 positionVec3 = camera.position();
 		keyframeData.put("position", new double[]{positionVec3.x, positionVec3.y, positionVec3.z});
 
-		if (FlashplusClient.useQuaternion) {
+		if (FlashplusClient.getConfig().useQuaternion) {
 			keyframeData.put("w", FlashplusClient.quaternion.w);
 			keyframeData.put("x", FlashplusClient.quaternion.x);
 			keyframeData.put("y", FlashplusClient.quaternion.y);
 			keyframeData.put("z", FlashplusClient.quaternion.z);
 		} else {
-			keyframeData.put("yaw", camera.getYRot());
+			keyframeData.put("yaw",   camera.getYRot());
 			keyframeData.put("pitch", camera.getXRot());
-			keyframeData.put("roll", FlashplusClient.roll);
+			keyframeData.put("roll",  FlashplusClient.roll);
 		}
 
-		// grab MC fov
-//		keyframeData.put("fov", FlashplusClient.getFOV());
-
-		// Calculate FOV
 		float currentOverrideFov = replayServer.getEditorState().replayVisuals.overrideFovAmount;
-		float keyframeStartFov = this.flashPlus$previousFov;
-		float keyframeEndFov = FlashplusClient.getFOV();
-
-		final float EPSILON = 0.001f;
+		float keyframeEndFov     = FlashplusClient.getFOV();
+		final float EPSILON      = 0.001f;
 		boolean isOverrideDifferent = Math.abs(currentOverrideFov - keyframeEndFov) > EPSILON;
+		float targetFov          = isOverrideDifferent ? currentOverrideFov : keyframeEndFov;
+		float interpolatedFov    = (float)(flashPlus$previousFov + (targetFov - flashPlus$previousFov) * partialClientTick);
 
-		float targetFov = isOverrideDifferent ? currentOverrideFov : keyframeEndFov;
-		float interpolatedFov = (float) (keyframeStartFov + (targetFov - keyframeStartFov) * partialClientTick);
-
-		keyframeData.put("fov", keyframeEndFov);
-        keyframeData.put("time", Minecraft.getInstance().level.getDayTime() % 24000);
+		keyframeData.put("fov",  keyframeEndFov);
+		keyframeData.put("time", Minecraft.getInstance().level.getDayTime() % 24000);
 
 		flashPlus$allCameraKeyframes.add(keyframeData);
-
 	}
 
 	@Unique
@@ -223,12 +398,12 @@ public abstract class ExportJobMixin {
 
 		for (Map<String, Object> currentModelMap : FlashplusClient.trackedmodels) {
 			for (Map.Entry<String, Object> entry : currentModelMap.entrySet()) {
-				String key = entry.getKey();
+				String key      = entry.getKey();
 				String[] keyParts = key.split("/");
 				if (keyParts.length != 2) continue;
 
 				String entityName = keyParts[0];
-				String partName = keyParts[1];
+				String partName   = keyParts[1];
 
 				Map<String, Object> partData = new HashMap<>();
 
@@ -241,39 +416,29 @@ public abstract class ExportJobMixin {
 						}
 					}
 				} catch (IllegalArgumentException e) {
-					// Invalid UUID format
 					continue;
 				}
 
 				if (entity == null) continue;
 
-				EntityRenderer<?,?> renderer = Minecraft.getInstance().getEntityRenderDispatcher().getRenderer(entity);
+				EntityRenderer<?, ?> renderer =
+						Minecraft.getInstance().getEntityRenderDispatcher().getRenderer(entity);
 
 				if ("Eyes".equals(partName)) {
-					float tick = Math.max(0.0f, Math.min(1.0f, (float) (partialClientTick + 0.001)));
+					float tick = Math.max(0.0f, Math.min(1.0f, (float)(partialClientTick + 0.001)));
 					Vec3 eyePos = entity.getPosition(tick);
 					partData.put("eyePosition", new double[]{
-							eyePos.x,
-							eyePos.y + entity.getEyeHeight(),
-							eyePos.z
-					});
+							eyePos.x, eyePos.y + entity.getEyeHeight(), eyePos.z});
 					partData.put("eyeangle", new double[]{
 							entity.getViewXRot((float) partialClientTick),
 							entity.getViewYRot((float) partialClientTick),
-							0.0
-					});
+							0.0});
+
 				} else if ("BlockPosition".equals(partName)) {
 					Vec3 blockPos = entity.getPosition((float) partialClientTick);
-					partData.put("blockPosition", new double[]{
-							blockPos.x,
-							blockPos.y,
-							blockPos.z
-					});
-					partData.put("entityrotation", new double[]{
-							entity.getYRot(),
-							entity.getYRot(),
-							0.0
-					});
+					partData.put("blockPosition", new double[]{blockPos.x, blockPos.y, blockPos.z});
+					partData.put("entityrotation", new double[]{entity.getYRot(), entity.getYRot(), 0.0});
+
 				} else {
 					if (renderer instanceof LivingEntityRenderer<?, ?, ?> livingRenderer) {
 						ModelPart part = flashPlus$getNamedModelPart(livingRenderer.getModel(), partName);
@@ -294,16 +459,14 @@ public abstract class ExportJobMixin {
 			}
 		}
 
-		if (keyframeData.size() > 1) { // More than just "tick" entry
+		if (keyframeData.size() > 1) {
 			flashPlus$trackedData.add(keyframeData);
 		}
 	}
 
 	@Unique
 	private void flashPlus$applySmoothingToFov() {
-		if (flashPlus$allCameraKeyframes == null || flashPlus$allCameraKeyframes.size() < 7) {
-			return;
-		}
+		if (flashPlus$allCameraKeyframes == null || flashPlus$allCameraKeyframes.size() < 7) return;
 
 		final int KERNEL_RADIUS = 3;
 		final float[] GAUSSIAN_KERNEL = {0.006f, 0.061f, 0.242f, 0.383f, 0.242f, 0.061f, 0.006f};
@@ -315,37 +478,26 @@ public abstract class ExportJobMixin {
 		}
 
 		int listSize = originalFovs.size();
-
-		for (int i = 0; i < listSize; i++) {
-			if (i < KERNEL_RADIUS || i >= listSize - KERNEL_RADIUS) {
-				continue;
-			}
-
+		for (int i = KERNEL_RADIUS; i < listSize - KERNEL_RADIUS; i++) {
 			float newFov = 0.0f;
 			for (int j = -KERNEL_RADIUS; j <= KERNEL_RADIUS; j++) {
-				int keyframeIndex = i + j;
-				int kernelIndex = j + KERNEL_RADIUS;
-				float fovAtNeighbor = originalFovs.get(keyframeIndex);
-				float weight = GAUSSIAN_KERNEL[kernelIndex];
-				newFov += fovAtNeighbor * weight;
+				newFov += originalFovs.get(i + j) * GAUSSIAN_KERNEL[j + KERNEL_RADIUS];
 			}
-
 			flashPlus$allCameraKeyframes.get(i).put("fov", newFov);
 		}
 	}
 
 	@Unique
-	private static ModelPart flashPlus$getNamedModelPart(net.minecraft.client.model.EntityModel<?> model, String partName) {
+	private static ModelPart flashPlus$getNamedModelPart(
+			net.minecraft.client.model.EntityModel<?> model, String partName) {
+
 		Class<?> currentClass = model.getClass();
 		while (currentClass != null) {
 			try {
 				java.lang.reflect.Field field = currentClass.getDeclaredField(partName);
 				field.setAccessible(true);
 				Object part = field.get(model);
-				if (part instanceof ModelPart) {
-					return (ModelPart) part;
-				}
-				return null;
+				return part instanceof ModelPart ? (ModelPart) part : null;
 			} catch (NoSuchFieldException e) {
 				currentClass = currentClass.getSuperclass();
 			} catch (IllegalAccessException e) {
@@ -357,76 +509,51 @@ public abstract class ExportJobMixin {
 		return null;
 	}
 
-	@Inject(
-			method = "doExport",
-			at = @At(
-					value = "INVOKE",
-					// This is the point right after keyframes are applied
-					target = "Lcom/moulberry/flashback/state/EditorState;applyKeyframes(Lcom/moulberry/flashback/keyframe/handler/KeyframeHandler;F)V",
-					shift = At.Shift.AFTER
-			)
-	)
-	private void overrideCameraForPanorama(VideoWriter videoWriter, SaveableFramebufferQueue downloader, CallbackInfo ci) {
-		// Check if this is a single-frame export (screenshot) and if it's meant to be a panorama face
-		// We know it's a panorama face if the start/end ticks are identical
-		// AND the initial yaw/pitch are set to our cubemap values.
-		if (this.settings.startTick() == this.settings.endTick()) {
-			Minecraft mc = Minecraft.getInstance();
-			if (mc.player != null) {
-				// Force the player rotation (which the camera follows)
-				mc.player.setYRot(this.settings.initialCameraYaw());
-				mc.player.setXRot(this.settings.initialCameraPitch());
+	@Unique
+	private void flashPlus$saveDepthFrame(int width, int height, int frameIndex) {
+		com.mojang.blaze3d.platform.NativeImage img = new com.mojang.blaze3d.platform.NativeImage(width, height, false);
 
-				// Also update previous rotations to prevent interpolation jitter
-				mc.player.yRotO = this.settings.initialCameraYaw();
-				mc.player.xRotO = this.settings.initialCameraPitch();
-				EditorState editorState = EditorStateManager.getCurrent();
-				if (editorState != null && editorState.replayVisuals.overrideFov) {
-					editorState.replayVisuals.overrideFovAmount = 90;
-				} else {
-					originalFov = mc.options.fov().get();
-					mc.options.fov().set(90);
-				}
+		float near = 0.05f;
+		float far = Minecraft.getInstance().gameRenderer.getDepthFar();
 
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				float z = flashPlus$rawDepthBuffer.get(x + y * width);
 
-				// Force the GameRenderer's camera to update immediately
-				mc.gameRenderer.getMainCamera().setup(
-						mc.level,
-						mc.player,
-						!mc.options.getCameraType().isFirstPerson(),
-						mc.options.getCameraType().isMirrored(),
-						1.0f // partialTicks
-				);
+				// Formula to turn logarithmic depth into linear distance
+				float z_n = 2.0f * z - 1.0f;
+				float linZ = (2.0f * near * far) / (far + near - z_n * (far - near));
+
+				// Normalize for visual PNG (0 = near, 255 = far)
+				float normalized = (linZ - near) / (far - near);
+				int gray = (int) (java.lang.Math.clamp(normalized, 0, 1) * 255.0f);
+
+				int col = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
+				img.setPixel(x, height - 1 - y, col);
 			}
 		}
 	}
+	// Define the output path (adjust folder name as needed)
+	String pathStr  = this.settings.output().toAbsolutePath().toString();
+	int lastDot     = pathStr.lastIndexOf('.');
+	String basePath = lastDot > 0 ? pathStr.substring(0, lastDot) : pathStr;
+	File exportDir = new File(basePath, "flashplus_depth");
+    if (!exportDir.()) exportDir.mkdirs();
 
-	@Inject(method = "doExport", at = @At("RETURN"))
-	private void onExportFinish(CallbackInfo ci) {
-		// Only run if the queue is now empty and we were actually processing a panorama
-		if (ExportJobQueue.count() == 0 && FlashplusClient.takePanorama) {
-			ExportJobQueue.drainingQueue = false;
-			Minecraft mc = Minecraft.getInstance();
-			mc.options.fov().set(originalFov);
+	java.io.File outputFile = new java.io.File(exportDir, String.format("depth_frame_%04d.png", frameIndex));
 
-			Path outputPath = this.settings.output();
-			Path folder = outputPath.getParent();
-			String fileName = outputPath.getFileName().toString();
-
-			String nameWithoutExtension = fileName.contains(".")
-					? fileName.substring(0, fileName.lastIndexOf("."))
-					: fileName;
-
-			String baseName = nameWithoutExtension.contains("_")
-					? nameWithoutExtension.substring(0, nameWithoutExtension.lastIndexOf("_"))
-					: nameWithoutExtension;
-
-            int size = this.settings.resolutionX();
-
-			new Thread(() -> {
-				PanoramaScreenshotHelper.convertCubemapToEquirectangular(folder, baseName, size);
-				System.out.println("Panorama conversion complete!");
-			}).start();
-		}
-	}
+	// Offload the file write to the IO executor so the render thread doesn't hang
+    com.mojang.blaze3d.systems.RenderSystem.recordRenderCall(() -> {
+		net.minecraft.Util.getIoWorkerExecutor().execute(() -> {
+			try {
+				img.writeTo(outputFile);
+			} catch (java.io.IOException e) {
+				// Replace with your logger if you have one
+				System.err.println("Failed to save depth frame: " + e.getMessage());
+			} finally {
+				// CRITICAL: NativeImage uses off-heap memory; it must be closed manually
+				img.close();
+			}
+		});
+	});
 }

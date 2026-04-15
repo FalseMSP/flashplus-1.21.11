@@ -11,6 +11,8 @@
 		"Window.StartExportWindowMixin",
 		"Window.ExportScreenshotWindowMixin",
 		"Window.MovementWindowMixin",
+		"Exporting.PerfectFramesMixin",
+		"Exporting.GlTextureAccessor",
 		"ReplayUIRollMixin"
 	],
 	"injectors": {

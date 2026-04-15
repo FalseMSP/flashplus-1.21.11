@@ -232,7 +232,7 @@ public class PanoramaScreenshotHelper {
                 if (img != null) img.close();
             }
             equi.close();
-            if (FlashplusClient.deleteCubeMap) {
+            if (FlashplusClient.getConfig().deleteCubeMap) {
                 for (int i = 0; i < 6; i++) {
                     Path facePath = baseFolder.resolve(baseName + suffixes[i] + ".png");
                     try {

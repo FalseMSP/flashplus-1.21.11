@@ -10,14 +10,14 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import static redsmods.flashplus.FlashplusClient.lockRoll;
+import redsmods.flashplus.FlashplusClient;
 
 @Mixin(ReplayUI.class)
 public class ReplayUIRollMixin {
     @Inject(method = "drawOverlayInternal", at = @At("HEAD"))
     private static void onDrawOverlay(CallbackInfo ci) {
         EditorState editorState = EditorStateManager.getCurrent();
-        if (editorState == null || !editorState.replayVisuals.overrideRoll || lockRoll) {
+        if (editorState == null || !editorState.replayVisuals.overrideRoll || FlashplusClient.getConfig().lockRoll) {
             return;
         }
 

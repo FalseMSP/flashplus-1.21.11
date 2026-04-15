@@ -7,8 +7,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import static redsmods.flashplus.FlashplusClient.lockRoll;
+import redsmods.flashplus.FlashplusClient;
 
 @Mixin(MovementWindow.class)
 public class MovementWindowMixin {
@@ -24,8 +23,8 @@ public class MovementWindowMixin {
     )
     private static void addLockRollCheckbox(ImBoolean open, boolean newlyOpened, CallbackInfo ci) {
         ImGui.sameLine();
-        if (ImGui.checkbox("Lock Roll", lockRoll)) {
-            lockRoll = !lockRoll;
+        if (ImGui.checkbox("Lock Roll", FlashplusClient.getConfig().lockRoll)) {
+            FlashplusClient.getConfig().lockRoll = !FlashplusClient.getConfig().lockRoll;
         }
     }
 }

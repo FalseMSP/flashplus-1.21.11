@@ -12,11 +12,10 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import redsmods.flashplus.Config;
+import redsmods.flashplus.FlashplusClient;
 
 import java.nio.file.Path;
-
-import static redsmods.flashplus.FlashplusClient.deleteCubeMap;
-import static redsmods.flashplus.FlashplusClient.takePanorama;
 
 @Mixin(ExportScreenshotWindow.class)
 public class ExportScreenshotWindowMixin {
@@ -33,18 +32,19 @@ public class ExportScreenshotWindowMixin {
     private static void injectTakePanoramaCheckbox(CallbackInfo ci) {
         // Move to the right of the "No GUI" tooltip/checkbox
         ImGui.sameLine();
+        Config config = FlashplusClient.getConfig();
 
         // Render your checkbox
-        if (ImGui.checkbox("Take Panorama", takePanorama)) {
-            takePanorama = !takePanorama;
+        if (ImGui.checkbox("Take Panorama", config.takePanorama)) {
+            config.takePanorama = !config.takePanorama;
         }
 
         ImGuiHelper.tooltip("Captures a Equirectangular panorama");
         ImGui.sameLine();
 
         // Render your checkbox
-        if (ImGui.checkbox("Delete CubeMap", deleteCubeMap)) {
-            deleteCubeMap = !deleteCubeMap;
+        if (ImGui.checkbox("Delete CubeMap", config.deleteCubeMap)) {
+            config.deleteCubeMap = !config.deleteCubeMap;
         }
 
         ImGuiHelper.tooltip("Deletes the cube map helpers");
@@ -60,7 +60,8 @@ public class ExportScreenshotWindowMixin {
             cancellable = true
     )
     private static void handlePanoramaExport(FlashbackConfigV1 config, EditorState editorState, String pathStr, CallbackInfo ci) {
-        if (!takePanorama) return;
+        Config plusConfig = FlashplusClient.getConfig();
+        if (!plusConfig.takePanorama) return;
 
         // 1. Cancel the original single screenshot job
         ci.cancel();
