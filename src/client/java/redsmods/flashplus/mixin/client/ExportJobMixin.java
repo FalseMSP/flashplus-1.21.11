@@ -23,7 +23,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import redsmods.flashplus.FlashplusClient;
-import redsmods.flashplus.PanoramaScreenshotHelper;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -54,7 +53,6 @@ public abstract class ExportJobMixin {
 	private boolean entityTracking = true;
 	private int flashPlus$tick = 0;
 	private Integer originalFov = 70;
-//	private boolean flashPlus$panoramaDone = false;
 
 	/**
 	 * Initialize data structures at the start of doExport, right after renderStartTime is set
@@ -106,11 +104,11 @@ public abstract class ExportJobMixin {
 		// You can access this.currentTickDouble directly since it's a field
 		double partialClientTick = this.currentTickDouble - (int)this.currentTickDouble;
 
-		if (FlashplusClient.cjson && !(FlashplusClient.takePanorama && settings.endTick() == settings.startTick())) {
+		if (FlashplusClient.cjson) {
 			flashPlus$captureCameraKeyframe(flashPlus$tick, partialClientTick, replayServer);
 		}
 
-		if (FlashplusClient.etjson && !(FlashplusClient.takePanorama && settings.endTick() == settings.startTick())) {
+		if (FlashplusClient.etjson) {
 			flashPlus$captureEntityData(flashPlus$tick, partialClientTick);
 		}
 		flashPlus$tick++;
@@ -208,7 +206,7 @@ public abstract class ExportJobMixin {
 		float interpolatedFov = (float) (keyframeStartFov + (targetFov - keyframeStartFov) * partialClientTick);
 
 		keyframeData.put("fov", keyframeEndFov);
-        keyframeData.put("time", Minecraft.getInstance().level.getDayTime() % 24000);
+        keyframeData.put("time", Minecraft.getInstance().level.getGameTime() % 24000);
 
 		flashPlus$allCameraKeyframes.add(keyframeData);
 
@@ -355,78 +353,5 @@ public abstract class ExportJobMixin {
 			}
 		}
 		return null;
-	}
-
-	@Inject(
-			method = "doExport",
-			at = @At(
-					value = "INVOKE",
-					// This is the point right after keyframes are applied
-					target = "Lcom/moulberry/flashback/state/EditorState;applyKeyframes(Lcom/moulberry/flashback/keyframe/handler/KeyframeHandler;F)V",
-					shift = At.Shift.AFTER
-			)
-	)
-	private void overrideCameraForPanorama(VideoWriter videoWriter, SaveableFramebufferQueue downloader, CallbackInfo ci) {
-		// Check if this is a single-frame export (screenshot) and if it's meant to be a panorama face
-		// We know it's a panorama face if the start/end ticks are identical
-		// AND the initial yaw/pitch are set to our cubemap values.
-		if (this.settings.startTick() == this.settings.endTick()) {
-			Minecraft mc = Minecraft.getInstance();
-			if (mc.player != null) {
-				// Force the player rotation (which the camera follows)
-				mc.player.setYRot(this.settings.initialCameraYaw());
-				mc.player.setXRot(this.settings.initialCameraPitch());
-
-				// Also update previous rotations to prevent interpolation jitter
-				mc.player.yRotO = this.settings.initialCameraYaw();
-				mc.player.xRotO = this.settings.initialCameraPitch();
-				EditorState editorState = EditorStateManager.getCurrent();
-				if (editorState != null && editorState.replayVisuals.overrideFov) {
-					editorState.replayVisuals.overrideFovAmount = 90;
-				} else {
-					originalFov = mc.options.fov().get();
-					mc.options.fov().set(90);
-				}
-
-
-				// Force the GameRenderer's camera to update immediately
-				mc.gameRenderer.getMainCamera().setup(
-						mc.level,
-						mc.player,
-						!mc.options.getCameraType().isFirstPerson(),
-						mc.options.getCameraType().isMirrored(),
-						1.0f // partialTicks
-				);
-			}
-		}
-	}
-
-	@Inject(method = "doExport", at = @At("RETURN"))
-	private void onExportFinish(CallbackInfo ci) {
-		// Only run if the queue is now empty and we were actually processing a panorama
-		if (ExportJobQueue.count() == 0 && FlashplusClient.takePanorama) {
-			ExportJobQueue.drainingQueue = false;
-			Minecraft mc = Minecraft.getInstance();
-			mc.options.fov().set(originalFov);
-
-			Path outputPath = this.settings.output();
-			Path folder = outputPath.getParent();
-			String fileName = outputPath.getFileName().toString();
-
-			String nameWithoutExtension = fileName.contains(".")
-					? fileName.substring(0, fileName.lastIndexOf("."))
-					: fileName;
-
-			String baseName = nameWithoutExtension.contains("_")
-					? nameWithoutExtension.substring(0, nameWithoutExtension.lastIndexOf("_"))
-					: nameWithoutExtension;
-
-            int size = this.settings.resolutionX();
-
-			new Thread(() -> {
-				PanoramaScreenshotHelper.convertCubemapToEquirectangular(folder, baseName, size);
-				System.out.println("Panorama conversion complete!");
-			}).start();
-		}
 	}
 }
