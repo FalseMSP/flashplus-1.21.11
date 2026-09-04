@@ -9,6 +9,7 @@ import com.moulberry.flashback.playback.ReplayServer;
 import com.moulberry.flashback.state.EditorState;
 import com.moulberry.flashback.state.EditorStateManager;
 import net.minecraft.client.Camera;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.entity.EntityRenderer;
@@ -173,7 +174,7 @@ public abstract class ExportJobMixin {
 
 	@Unique
 	private void flashPlus$captureCameraKeyframe(int tickIndex, double partialClientTick, ReplayServer replayServer) {
-		Camera camera = Minecraft.getInstance().gameRenderer.getMainCamera();
+		Camera camera = Minecraft.getInstance().gameRenderer.mainCamera();
 		if (camera == null) return;
 
 		Map<String, Object> keyframeData = new HashMap<>();
@@ -208,7 +209,7 @@ public abstract class ExportJobMixin {
 		float interpolatedFov = (float) (keyframeStartFov + (targetFov - keyframeStartFov) * partialClientTick);
 
 		keyframeData.put("fov", keyframeEndFov);
-        keyframeData.put("time", Minecraft.getInstance().level.getDayTime() % 24000);
+        keyframeData.put("time", Minecraft.getInstance().level.getGameTime() % 24000);
 
 		flashPlus$allCameraKeyframes.add(keyframeData);
 
@@ -390,13 +391,8 @@ public abstract class ExportJobMixin {
 
 
 				// Force the GameRenderer's camera to update immediately
-				mc.gameRenderer.getMainCamera().setup(
-						mc.level,
-						mc.player,
-						!mc.options.getCameraType().isFirstPerson(),
-						mc.options.getCameraType().isMirrored(),
-						1.0f // partialTicks
-				);
+			mc.gameRenderer.mainCamera().setLevel(mc.level);
+			mc.gameRenderer.mainCamera().update(DeltaTracker.ONE);
 			}
 		}
 	}

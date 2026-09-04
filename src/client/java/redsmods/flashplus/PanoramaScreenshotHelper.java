@@ -3,7 +3,6 @@ package redsmods.flashplus;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.moulberry.flashback.Flashback;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.Screenshot;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
